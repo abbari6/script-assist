@@ -1,11 +1,17 @@
-import { NestFactory } from '@nestjs/core';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { RateLimitGuard } from '@common/guards/rate-limit.guard';
+import { CacheService } from '@common/services/cache.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+  const reflector = app.get(Reflector);
+  const cacheService = app.get(CacheService);
+
+  app.useGlobalGuards(new RateLimitGuard(reflector, cacheService));
+
   // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
@@ -36,4 +42,4 @@ async function bootstrap() {
   console.log(`Application running on: http://localhost:${port}`);
   console.log(`Swagger documentation: http://localhost:${port}/api`);
 }
-bootstrap(); 
+bootstrap();

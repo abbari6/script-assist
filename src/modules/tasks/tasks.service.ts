@@ -32,11 +32,12 @@ export class TasksService {
     return savedTask;
   }
 
-  async findAll(): Promise<Task[]> {
+  async findAll(userId: string): Promise<Task[]> {
     // Inefficient implementation: retrieves all tasks without pagination
     // and loads all relations, causing potential performance issues
     return this.tasksRepository.find({
       relations: ['user'],
+      where: { userId },
     });
   }
 
