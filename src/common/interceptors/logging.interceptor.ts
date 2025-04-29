@@ -19,19 +19,24 @@ export class LoggingInterceptor implements NestInterceptor {
     const method = req.method;
     const url = req.url;
     const now = Date.now();
+    const requestId = req.requestId || '-';
+    const userId = req.user?.id || '-';
 
-    // Basic implementation (to be enhanced by candidates)
-    this.logger.log(`Request: ${method} ${url}`);
+    this.logger.log(`[${requestId}] [User:${userId}] Request: ${method} ${url}`);
 
     return next.handle().pipe(
       tap({
-        next: (val) => {
-          this.logger.log(`Response: ${method} ${url} ${Date.now() - now}ms`);
+        next: () => {
+          this.logger.log(
+            `[${requestId}] [User:${userId}] Response: ${method} ${url} ${Date.now() - now}ms`,
+          );
         },
-        error: (err) => {
-          this.logger.error(`Error in ${method} ${url} ${Date.now() - now}ms: ${err.message}`);
+        error: err => {
+          this.logger.error(
+            `[${requestId}] [User:${userId}] Error in ${method} ${url} ${Date.now() - now}ms: ${err?.message}`,
+          );
         },
       }),
     );
   }
-} 
+}

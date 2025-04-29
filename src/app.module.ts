@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TaskProcessorModule } from './queues/task-processor/task-processor.module';
 import { ScheduledTasksModule } from './queues/scheduled-tasks/scheduled-tasks.module';
 import { CacheService } from './common/services/cache.service';
+import { HealthModule } from './health.module';
 import jwtConfig from '@config/jwt.config';
 
 @Module({
@@ -72,6 +73,7 @@ import jwtConfig from '@config/jwt.config';
     // Queue processing modules
     TaskProcessorModule,
     ScheduledTasksModule,
+    HealthModule,
   ],
   providers: [
     // Inefficient: Global cache service with no configuration options
