@@ -15,13 +15,9 @@ import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Task } from './entities/task.entity';
 import { TaskStatus } from './enums/task-status.enum';
-import { TaskPriority } from './enums/task-priority.enum';
 import { AccessTokenGuard } from '@common/guards/access-token.guard';
-import { CurrentUser } from '@common/decorators/current-user.decorator'; // <- Let's assume you have this
+import { CurrentUser } from '@common/decorators/current-user.decorator';
 import { JwtPayload } from '@modules/auth/auth.types';
 
 @ApiTags('tasks')
@@ -29,12 +25,7 @@ import { JwtPayload } from '@modules/auth/auth.types';
 @UseGuards(AccessTokenGuard)
 @ApiBearerAuth()
 export class TasksController {
-  constructor(
-    private readonly tasksService: TasksService,
-    // Anti-pattern: Controller directly accessing repository
-    @InjectRepository(Task)
-    private taskRepository: Repository<Task>,
-  ) {}
+  constructor(private readonly tasksService: TasksService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
@@ -50,58 +41,31 @@ export class TasksController {
   @ApiQuery({ name: 'limit', required: false })
   async findAll(
     @CurrentUser() user: JwtPayload,
-    @Query('status') status?: string,
+    @Query('status') status?: TaskStatus,
     @Query('priority') priority?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page') page = 1,
+    @Query('limit') limit = 10,
   ) {
-    // Inefficient approach: Inconsistent pagination handling
-    if (page && !limit) {
-      limit = 10; // Default limit
-    }
-
-    // Inefficient processing: Manual filtering instead of using repository
-    let tasks = await this.tasksService.findAll(user.id);
-
-    // Inefficient filtering: In-memory filtering instead of database filtering
-    if (status) {
-      tasks = tasks.filter(task => task.status === (status as TaskStatus));
-    }
-
-    if (priority) {
-      tasks = tasks.filter(task => task.priority === (priority as TaskPriority));
-    }
-
-    // Inefficient pagination: In-memory pagination
-    if (page && limit) {
-      const startIndex = (page - 1) * limit;
-      const endIndex = page * limit;
-      tasks = tasks.slice(startIndex, endIndex);
-    }
+    const { data, total } = await this.tasksService.findAll(
+      user.id,
+      { status, priority },
+      page,
+      limit,
+    );
 
     return {
-      data: tasks,
-      count: tasks.length,
-      // Missing metadata for proper pagination
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     };
   }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get task statistics' })
   async getStats(@CurrentUser() user: JwtPayload) {
-    // Inefficient approach: N+1 query problem
-    const tasks = await this.taskRepository.find({ where: { userId: user.id } });
-
-    // Inefficient computation: Should be done with SQL aggregation
-    const statistics = {
-      total: tasks.length,
-      completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
-      inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
-      pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
-      highPriority: tasks.filter(t => t.priority === TaskPriority.HIGH).length,
-    };
-
-    return statistics;
+    return this.tasksService.getStats(user.id);
   }
 
   @Get(':id')
@@ -109,12 +73,13 @@ export class TasksController {
   async findOne(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     const task = await this.tasksService.findOne(id);
 
-    if (!task || task.userId !== user.id) {
-      throw new HttpException('Task not found', HttpStatus.NOT_FOUND);
+    if (task.userId !== user.id) {
+      throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
     }
 
     return task;
   }
+
   @Patch(':id')
   @ApiOperation({ summary: 'Update a task' })
   async update(
@@ -122,11 +87,10 @@ export class TasksController {
     @Param('id') id: string,
     @Body() updateTaskDto: UpdateTaskDto,
   ) {
-    // No validation if task exists before update
     const task = await this.tasksService.findOne(id);
 
-    if (!task || task.userId !== user.id) {
-      throw new HttpException('Task not found or unauthorized', HttpStatus.FORBIDDEN);
+    if (task.userId !== user.id) {
+      throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
     }
 
     return this.tasksService.update(id, updateTaskDto);
@@ -137,54 +101,20 @@ export class TasksController {
   async remove(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     const task = await this.tasksService.findOne(id);
 
-    if (!task || task.userId !== user.id) {
-      throw new HttpException('Task not found or unauthorized', HttpStatus.FORBIDDEN);
+    if (task.userId !== user.id) {
+      throw new HttpException('Unauthorized', HttpStatus.FORBIDDEN);
     }
 
-    return this.tasksService.remove(id);
+    await this.tasksService.remove(id);
+    return { message: 'Task deleted successfully' };
   }
+
   @Post('batch')
   @ApiOperation({ summary: 'Batch process multiple tasks' })
   async batchProcess(
     @CurrentUser() user: JwtPayload,
-    @Body() operations: { tasks: string[]; action: string },
+    @Body() body: { tasks: string[]; action: 'complete' | 'delete' },
   ) {
-    // Inefficient batch processing: Sequential processing instead of bulk operations
-    const { tasks: taskIds, action } = operations;
-    const results = [];
-
-    // N+1 query problem: Processing tasks one by one
-    for (const taskId of taskIds) {
-      try {
-        const task = await this.tasksService.findOne(taskId);
-
-        if (!task || task.userId !== user.id) {
-          throw new Error('Unauthorized or task not found');
-        }
-        let result;
-
-        switch (action) {
-          case 'complete':
-            result = await this.tasksService.update(taskId, { status: TaskStatus.COMPLETED });
-            break;
-          case 'delete':
-            result = await this.tasksService.remove(taskId);
-            break;
-          default:
-            throw new HttpException(`Unknown action: ${action}`, HttpStatus.BAD_REQUEST);
-        }
-
-        results.push({ taskId, success: true, result });
-      } catch (error) {
-        // Inconsistent error handling
-        results.push({
-          taskId,
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
-    }
-
-    return results;
+    return this.tasksService.batchProcess(user.id, body.tasks, body.action);
   }
 }
