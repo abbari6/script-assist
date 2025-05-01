@@ -1,77 +1,42 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { JwtService } from '@nestjs/jwt';
-import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import * as bcrypt from 'bcrypt';
 import { EncodeDataArgs, TokenResponse } from './auth.types';
 import { TokenType } from '@common/globals.constants';
 import { ConfigService } from '@nestjs/config';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { UserLoginResponseDto } from './dto/user-login-response.dto';
-import { UserMapper } from './mapper/user.mapper';
+import { LoginCommand } from './commands/login.command';
+import { RegisterCommand } from './commands/register.command';
+import { RefreshTokensCommand } from './commands/refresh-tokens.command';
+import { ValidateUserQuery } from './queries/validate-user.query';
+import { ValidateUserRolesQuery } from './queries/validate-user-roles.query';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private userMapper: UserMapper,
+    private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
   ) {}
 
   async login(loginDto: LoginDto): Promise<UserLoginResponseDto> {
-    const { email, password } = loginDto;
-
-    const user = await this.usersService.findOne({ where: { email } });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid email');
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.password);
-
-    if (!passwordValid) {
-      throw new UnauthorizedException('Invalid password');
-    }
-
-    return {
-      user: this.userMapper.toResponse({ ...user }),
-      ...(await this.getTokens({
-        user: user,
-      })),
-    };
+    return this.commandBus.execute(new LoginCommand(loginDto));
   }
 
   async register(registerDto: RegisterDto): Promise<UserLoginResponseDto> {
-    const existingUser = await this.usersService.findOne({ where: { email: registerDto.email } });
-
-    if (existingUser) {
-      throw new UnauthorizedException('Email already exists');
-    }
-
-    const user = await this.usersService.create(registerDto);
-
-    return {
-      user: this.userMapper.toResponse({ ...user }),
-      ...(await this.getTokens({
-        user: user,
-      })),
-    };
+    return this.commandBus.execute(new RegisterCommand(registerDto));
   }
 
   async validateUser(userId: string): Promise<any> {
-    const user = await this.usersService.findOneById(userId);
-
-    if (!user) {
-      return null;
-    }
-
-    return user;
+    return this.queryBus.execute(new ValidateUserQuery(userId));
   }
 
   async validateUserRoles(userId: string, requiredRoles: string[]): Promise<boolean> {
-    return true;
+    return this.queryBus.execute(new ValidateUserRolesQuery(userId, requiredRoles));
   }
 
   public getAccessToken(data: EncodeDataArgs): TokenResponse {
@@ -142,6 +107,6 @@ export class AuthService {
   }
 
   async refreshTokens(data: EncodeDataArgs): Promise<TokenResponseDto> {
-    return await this.getTokens(data);
+    return this.commandBus.execute(new RefreshTokensCommand(data));
   }
 }
